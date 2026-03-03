@@ -1,11 +1,13 @@
-use crate::time::{FrameDelta, Instant, Microseconds, micros_to_frame_delta};
+//! Delta helper built on top of sampled `Instant` values.
+
+use crate::time::{Duration, Instant};
 
 #[derive(Default)]
-pub struct Clock {
+pub struct DeltaClock {
     pub last_step: Option<Instant>,
 }
 
-impl Clock {
+impl DeltaClock {
     #[inline(always)]
     pub fn new(now: Instant) -> Self {
         Self {
@@ -14,22 +16,17 @@ impl Clock {
     }
 
     #[inline(always)]
-    pub fn tick_us(&mut self, now: Instant) -> Microseconds {
+    pub fn tick(&mut self, now: Instant) -> Duration {
         match self.last_step {
             Some(last) => {
-                let dt_us = now.elapsed_since(last);
+                let dt = now - last;
                 self.last_step = Some(now);
-                dt_us
+                dt
             }
             None => {
                 self.last_step = Some(now);
-                Microseconds(0)
+                Duration::ZERO
             }
         }
-    }
-
-    #[inline(always)]
-    pub fn tick(&mut self, now: Instant) -> FrameDelta {
-        micros_to_frame_delta(self.tick_us(now))
     }
 }

@@ -1,298 +1,124 @@
-use fixed::{traits::ToFixed, types::U48F16};
+//! Semantic monotonic time model for the workspace.
 
-type WideFx = fixed::types::I16F16;
-type TimeFx = fixed::types::U16F16;
-type AbsoluteTimeFx = U48F16;
+type RawDuration = fugit::MicrosDurationU64;
+type RawInstant = fugit::TimerInstantU64<1_000_000>;
 
 #[cfg(feature = "defmt")]
 use defmt::Format;
 
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Microseconds(pub u64);
-
-/// Absolute timestamp in seconds since boot.
+/// Primary elapsed-time type for the workspace.
 ///
-/// Uses `U48F16` so it can represent the full `u64` microsecond range without saturating.
+/// Backed by `fugit` microsecond ticks to keep arithmetic cheap and deterministic on MCUs.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct AbsoluteSeconds(pub AbsoluteTimeFx);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Duration(pub(crate) RawDuration);
 
-impl AbsoluteSeconds {
-    pub const ZERO: Self = Self(AbsoluteTimeFx::ZERO);
-
+impl Default for Duration {
     #[inline(always)]
-    pub fn from_num<T: ToFixed>(v: T) -> Self {
-        Self(AbsoluteTimeFx::from_num(v))
-    }
-
-    #[inline(always)]
-    pub const fn whole_seconds(self) -> u64 {
-        self.0.to_bits() >> 16
+    fn default() -> Self {
+        Self::ZERO
     }
 }
 
-#[cfg(feature = "defmt")]
-impl Format for AbsoluteSeconds {
-    fn format(&self, f: defmt::Formatter) {
-        let bits = self.0.to_bits();
-        let whole = bits >> 16;
-        let frac_millis = (((bits & 0xFFFF) as u32).saturating_mul(1000) >> 16) as u16;
+impl Duration {
+    pub const ZERO: Self = Self(RawDuration::from_ticks(0));
 
-        defmt::write!(f, "{=u64}.", whole);
-        if frac_millis < 10 {
-            defmt::write!(f, "00{=u16}s", frac_millis);
-        } else if frac_millis < 100 {
-            defmt::write!(f, "0{=u16}s", frac_millis);
-        } else {
-            defmt::write!(f, "{=u16}s", frac_millis);
+    #[inline(always)]
+    pub const fn from_micros(us: u64) -> Self {
+        Self(RawDuration::from_ticks(us))
+    }
+
+    #[inline(always)]
+    pub const fn as_micros(self) -> u64 {
+        self.0.ticks()
+    }
+
+    #[inline(always)]
+    pub const fn saturating_add(self, rhs: Self) -> Self {
+        match self.0.checked_add(rhs.0) {
+            Some(value) => Self(value),
+            None => Self(RawDuration::from_ticks(u64::MAX)),
         }
     }
 }
 
 /// Monotonic timestamp in microseconds since boot.
 ///
-/// Stored as a wrapping `u64` to keep it cheap (no `Duration` plumbing).
-/// Wrap period: ~584k years.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Instant(pub u64);
+/// Backed by `fugit` microsecond ticks while keeping a semantic workspace-facing API.
+/// Raw wrap period remains ~584k years.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Instant(pub(crate) RawInstant);
+
+impl Default for Instant {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
 
 impl Instant {
+    pub const ZERO: Self = Self(RawInstant::from_ticks(0));
+
     #[inline(always)]
     pub const fn from_micros(us: u64) -> Self {
-        Self(us)
+        Self(RawInstant::from_ticks(us))
     }
 
     #[inline(always)]
     pub const fn as_micros(self) -> u64 {
-        self.0
-    }
-
-    /// Wrapping delta in microseconds.
-    #[inline(always)]
-    pub fn elapsed_since(self, earlier: Instant) -> Microseconds {
-        Microseconds(self.0.wrapping_sub(earlier.0))
-    }
-
-    /// Convert an absolute timestamp to seconds without saturation.
-    ///
-    /// Uses `AbsoluteSeconds` (`U48F16`) so full `u64` microsecond range is preserved.
-    #[inline(always)]
-    pub fn as_seconds(self) -> AbsoluteSeconds {
-        micros_to_absolute_seconds(Microseconds(self.0))
-    }
-
-    /// Convert an absolute timestamp to `DurationSeconds` (`U16F16`), saturating at max.
-    ///
-    /// This is kept for APIs that explicitly operate in duration domain.
-    #[inline(always)]
-    pub fn as_duration_seconds(self) -> DurationSeconds {
-        micros_to_duration(Microseconds(self.0))
-    }
-
-    /// Convert a delta between two timestamps to seconds (fixed point) with no division.
-    ///
-    /// Uses wrapping subtraction in microseconds and the same reciprocal conversion.
-    /// This is unambiguous as long as true elapsed time is less than one wrap period (~584k years).
-    #[inline(always)]
-    pub fn dt_since(self, earlier: Instant) -> FrameDelta {
-        micros_to_frame_delta(self.elapsed_since(earlier))
+        self.0.ticks()
     }
 }
 
 #[cfg(feature = "defmt")]
 impl Format for Instant {
     fn format(&self, f: defmt::Formatter) {
-        defmt::write!(f, "t+{=u64}us", self.0);
-    }
-}
-
-/// 1 / 1_000_000 in U32F32, rounded.
-///
-/// Value: 2^32 / 1_000_000 ≈ 4294.967296 -> 4295.
-const INV_US_TO_S_BITS: u64 = 4295;
-
-/// Convert microseconds to absolute seconds in `AbsoluteSeconds` (`U48F16`).
-#[inline(always)]
-pub fn micros_to_absolute_seconds(us: Microseconds) -> AbsoluteSeconds {
-    let bits_q48_16 = ((us.0 as u128) << 16) / 1_000_000u128;
-    // Guaranteed to fit for all u64 microsecond inputs.
-    let bits = bits_q48_16 as u64;
-    AbsoluteSeconds(AbsoluteTimeFx::from_bits(bits))
-}
-
-/// Convert microseconds to seconds in `Seconds` (U16F16) without division.
-#[inline(always)]
-pub fn micros_to_seconds(us: Microseconds) -> Seconds {
-    let us = us.0;
-    let prod = (us as u128).saturating_mul(INV_US_TO_S_BITS as u128);
-    let secs_q16_16 = prod >> 16;
-    let clamped = secs_q16_16.min(u32::MAX as u128) as u32;
-    Seconds(TimeFx::from_bits(clamped))
-}
-
-#[inline(always)]
-pub fn micros_to_frame_delta(us: Microseconds) -> FrameDelta {
-    FrameDelta::from(micros_to_seconds(us))
-}
-
-#[inline(always)]
-pub fn micros_to_duration(us: Microseconds) -> DurationSeconds {
-    DurationSeconds::from(micros_to_seconds(us))
-}
-
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Seconds(pub TimeFx);
-
-impl Seconds {
-    pub const ZERO: Self = Self(TimeFx::ZERO);
-
-    #[inline(always)]
-    pub fn from_num<T: ToFixed>(v: T) -> Self {
-        Self(TimeFx::from_num(v))
-    }
-
-    #[inline(always)]
-    pub const fn saturating_sub(self, rhs: Self) -> Self {
-        Self(self.0.saturating_sub(rhs.0))
-    }
-
-    #[inline(always)]
-    pub fn is_zero(self) -> bool {
-        self.0 == TimeFx::ZERO
-    }
-
-    #[inline(always)]
-    pub fn is_positive(self) -> bool {
-        self.0 > TimeFx::ZERO
-    }
-
-    #[inline(always)]
-    pub fn as_wide(self) -> WideFx {
-        WideFx::from_num(self.0)
-    }
-}
-
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct FrameDelta(pub TimeFx);
-
-impl FrameDelta {
-    pub const ZERO: Self = Self(TimeFx::ZERO);
-
-    #[inline(always)]
-    pub fn from_num<T: ToFixed>(v: T) -> Self {
-        Self(TimeFx::from_num(v))
-    }
-
-    #[inline(always)]
-    pub const fn from_seconds(seconds: Seconds) -> Self {
-        Self(seconds.0)
-    }
-
-    #[inline(always)]
-    pub const fn as_seconds(self) -> Seconds {
-        Seconds(self.0)
-    }
-
-    #[inline(always)]
-    pub fn is_zero(self) -> bool {
-        self.0 == TimeFx::ZERO
-    }
-
-    #[inline(always)]
-    pub fn is_positive(self) -> bool {
-        self.0 > TimeFx::ZERO
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl Format for FrameDelta {
-    fn format(&self, f: defmt::Formatter) {
-        let bits = self.0.to_bits() as u64;
-        let millis = bits.saturating_mul(1000) >> 16;
-        let whole = millis / 1000;
-        let frac = (millis % 1000) as u16;
-
-        defmt::write!(f, "{=u64}.", whole);
-        if frac < 10 {
-            defmt::write!(f, "00{=u16}s", frac);
-        } else if frac < 100 {
-            defmt::write!(f, "0{=u16}s", frac);
-        } else {
-            defmt::write!(f, "{=u16}s", frac);
-        }
-    }
-}
-
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DurationSeconds(pub TimeFx);
-
-impl DurationSeconds {
-    pub const ZERO: Self = Self(TimeFx::ZERO);
-
-    #[inline(always)]
-    pub fn from_num<T: ToFixed>(v: T) -> Self {
-        Self(TimeFx::from_num(v))
-    }
-
-    #[inline(always)]
-    pub const fn from_seconds(seconds: Seconds) -> Self {
-        Self(seconds.0)
-    }
-
-    #[inline(always)]
-    pub const fn as_seconds(self) -> Seconds {
-        Seconds(self.0)
-    }
-
-    #[inline(always)]
-    pub const fn saturating_sub_frame(self, dt: FrameDelta) -> Self {
-        Self(self.0.saturating_sub(dt.0))
-    }
-
-    #[inline(always)]
-    pub fn is_positive(self) -> bool {
-        self.0 > TimeFx::ZERO
-    }
-}
-
-impl From<Seconds> for FrameDelta {
-    #[inline(always)]
-    fn from(value: Seconds) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<FrameDelta> for Seconds {
-    #[inline(always)]
-    fn from(value: FrameDelta) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<Seconds> for DurationSeconds {
-    #[inline(always)]
-    fn from(value: Seconds) -> Self {
-        Self(value.0)
-    }
-}
-
-impl From<DurationSeconds> for Seconds {
-    #[inline(always)]
-    fn from(value: DurationSeconds) -> Self {
-        Self(value.0)
+        defmt::write!(f, "t+{=u64}us", self.as_micros());
     }
 }
 
 impl core::ops::Sub<Instant> for Instant {
-    type Output = FrameDelta;
+    type Output = Duration;
 
     #[inline(always)]
-    fn sub(self, rhs: Instant) -> FrameDelta {
-        self.dt_since(rhs)
+    fn sub(self, rhs: Instant) -> Duration {
+        Duration(self.0 - rhs.0)
+    }
+}
+
+impl core::ops::Add<Duration> for Instant {
+    type Output = Instant;
+
+    #[inline(always)]
+    fn add(self, rhs: Duration) -> Instant {
+        Instant(self.0 + rhs.0)
+    }
+}
+
+impl core::ops::Sub<Duration> for Instant {
+    type Output = Instant;
+
+    #[inline(always)]
+    fn sub(self, rhs: Duration) -> Instant {
+        Instant(self.0 - rhs.0)
+    }
+}
+
+impl core::ops::Add<Duration> for Duration {
+    type Output = Duration;
+
+    #[inline(always)]
+    fn add(self, rhs: Duration) -> Duration {
+        Duration(self.0 + rhs.0)
+    }
+}
+
+impl core::ops::Sub<Duration> for Duration {
+    type Output = Duration;
+
+    #[inline(always)]
+    fn sub(self, rhs: Duration) -> Duration {
+        Duration(self.0 - rhs.0)
     }
 }
 
@@ -301,17 +127,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn instant_as_seconds_is_not_limited_by_u16f16_ceiling() {
-        // 70,000 seconds (> 65,535.999s U16F16 ceiling)
-        let t = Instant::from_micros(70_000_000_000);
-        let s = t.as_seconds();
-        assert_eq!(s.whole_seconds(), 70_000);
+    fn duration_uses_microsecond_storage() {
+        assert_eq!(Duration::from_micros(42).as_micros(), 42);
     }
 
     #[test]
-    fn instant_as_duration_seconds_saturates_at_u16f16_max() {
-        let t = Instant::from_micros(70_000_000_000);
-        let s = t.as_duration_seconds();
-        assert_eq!(s.0.to_bits(), u32::MAX);
+    fn duration_saturating_add_behaves_as_expected() {
+        let a = Duration::from_micros(2_000);
+        let b = Duration::from_micros(750);
+
+        assert_eq!(
+            Duration::from_micros(u64::MAX - 1).saturating_add(Duration::from_micros(10)),
+            Duration::from_micros(u64::MAX)
+        );
+        assert_eq!(a.saturating_add(b), Duration::from_micros(2_750));
+    }
+
+    #[test]
+    fn instant_operators_delegate_to_fugit() {
+        let earlier = Instant::from_micros(1_000);
+        let later = Instant::from_micros(2_750);
+
+        assert_eq!(later - earlier, Duration::from_micros(1_750));
+    }
+
+    #[test]
+    fn instant_and_duration_operators_use_standard_shapes() {
+        let base = Instant::from_micros(1_000);
+        let dt = Duration::from_micros(250);
+
+        assert_eq!(base + dt, Instant::from_micros(1_250));
+        assert_eq!((base + dt) - dt, base);
+        assert_eq!((base + dt) - base, dt);
     }
 }
