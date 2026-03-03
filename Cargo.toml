@@ -1,0 +1,12 @@
+[package]
+name = "fx-time"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fixed = { workspace = true }
+defmt = { workspace = true, optional = true }
+
+[features]
+default = []
+defmt = ["dep:defmt"]
