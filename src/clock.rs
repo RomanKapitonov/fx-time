@@ -8,14 +8,14 @@ pub struct DeltaClock {
 }
 
 impl DeltaClock {
-    #[inline(always)]
+    // #[inline(always)]
     pub fn new(now: Instant) -> Self {
         Self {
             last_step: Some(now),
         }
     }
 
-    #[inline(always)]
+    // #[inline(always)]
     pub fn tick(&mut self, now: Instant) -> Duration {
         match self.last_step {
             Some(last) => {

@@ -14,7 +14,7 @@ use defmt::Format;
 pub struct Duration(pub(crate) RawDuration);
 
 impl Default for Duration {
-    #[inline(always)]
+    // #[inline(always)]
     fn default() -> Self {
         Self::ZERO
     }
@@ -23,17 +23,17 @@ impl Default for Duration {
 impl Duration {
     pub const ZERO: Self = Self(RawDuration::from_ticks(0));
 
-    #[inline(always)]
+    // #[inline(always)]
     pub const fn from_micros(us: u64) -> Self {
         Self(RawDuration::from_ticks(us))
     }
 
-    #[inline(always)]
+    // #[inline(always)]
     pub const fn as_micros(self) -> u64 {
         self.0.ticks()
     }
 
-    #[inline(always)]
+    // #[inline(always)]
     pub const fn saturating_add(self, rhs: Self) -> Self {
         match self.0.checked_add(rhs.0) {
             Some(value) => Self(value),
@@ -50,7 +50,7 @@ impl Duration {
 pub struct Instant(pub(crate) RawInstant);
 
 impl Default for Instant {
-    #[inline(always)]
+    // #[inline(always)]
     fn default() -> Self {
         Self::ZERO
     }
@@ -59,12 +59,12 @@ impl Default for Instant {
 impl Instant {
     pub const ZERO: Self = Self(RawInstant::from_ticks(0));
 
-    #[inline(always)]
+    // #[inline(always)]
     pub const fn from_micros(us: u64) -> Self {
         Self(RawInstant::from_ticks(us))
     }
 
-    #[inline(always)]
+    // #[inline(always)]
     pub const fn as_micros(self) -> u64 {
         self.0.ticks()
     }
@@ -80,7 +80,7 @@ impl Format for Instant {
 impl core::ops::Sub<Instant> for Instant {
     type Output = Duration;
 
-    #[inline(always)]
+    // #[inline(always)]
     fn sub(self, rhs: Instant) -> Duration {
         Duration(self.0 - rhs.0)
     }
@@ -89,7 +89,7 @@ impl core::ops::Sub<Instant> for Instant {
 impl core::ops::Add<Duration> for Instant {
     type Output = Instant;
 
-    #[inline(always)]
+    // #[inline(always)]
     fn add(self, rhs: Duration) -> Instant {
         Instant(self.0 + rhs.0)
     }
@@ -98,7 +98,7 @@ impl core::ops::Add<Duration> for Instant {
 impl core::ops::Sub<Duration> for Instant {
     type Output = Instant;
 
-    #[inline(always)]
+    // #[inline(always)]
     fn sub(self, rhs: Duration) -> Instant {
         Instant(self.0 - rhs.0)
     }
@@ -107,7 +107,7 @@ impl core::ops::Sub<Duration> for Instant {
 impl core::ops::Add<Duration> for Duration {
     type Output = Duration;
 
-    #[inline(always)]
+    // #[inline(always)]
     fn add(self, rhs: Duration) -> Duration {
         Duration(self.0 + rhs.0)
     }
@@ -116,7 +116,7 @@ impl core::ops::Add<Duration> for Duration {
 impl core::ops::Sub<Duration> for Duration {
     type Output = Duration;
 
-    #[inline(always)]
+    // #[inline(always)]
     fn sub(self, rhs: Duration) -> Duration {
         Duration(self.0 - rhs.0)
     }
