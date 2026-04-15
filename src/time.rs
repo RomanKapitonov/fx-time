@@ -34,6 +34,26 @@ impl Duration {
     pub const fn saturating_add(self, rhs: Self) -> Self {
         Self(self.0.saturating_add(rhs.0))
     }
+
+    pub const fn from_millis(ms: u64) -> Self {
+        Self::from_micros(ms.saturating_mul(1_000))
+    }
+}
+
+impl core::ops::Mul<u32> for Duration {
+    type Output = Duration;
+
+    fn mul(self, rhs: u32) -> Duration {
+        Duration::from_micros(self.as_micros().saturating_mul(rhs as u64))
+    }
+}
+
+impl core::ops::Mul<Duration> for u32 {
+    type Output = Duration;
+
+    fn mul(self, rhs: Duration) -> Duration {
+        rhs * self
+    }
 }
 
 /// Monotonic timestamp in microseconds since boot.
@@ -160,6 +180,37 @@ mod tests {
         assert_eq!(base + dt, Instant::from_micros(1_250));
         assert_eq!((base + dt) - dt, base);
         assert_eq!((base + dt) - base, dt);
+    }
+
+    #[test]
+    fn from_millis_converts_correctly() {
+        assert_eq!(Duration::from_millis(1), Duration::from_micros(1_000));
+        assert_eq!(Duration::from_millis(500), Duration::from_micros(500_000));
+    }
+
+    #[test]
+    fn from_millis_saturates_on_overflow() {
+        let large = Duration::from_millis(u64::MAX / 1_000 + 1);
+        let _ = large.as_micros();
+    }
+
+    #[test]
+    fn duration_mul_u32_scales_correctly() {
+        let base = Duration::from_micros(1_000);
+        assert_eq!(base * 3, Duration::from_micros(3_000));
+        assert_eq!(base * 0, Duration::ZERO);
+    }
+
+    #[test]
+    fn u32_mul_duration_is_commutative() {
+        let base = Duration::from_micros(250);
+        assert_eq!(4 * base, base * 4);
+    }
+
+    #[test]
+    fn duration_mul_saturates_on_overflow() {
+        let large = Duration::from_micros(u64::MAX / 2 + 1);
+        let _ = large * 3;
     }
 
     #[test]
