@@ -17,7 +17,7 @@ impl DeltaClock {
     pub fn tick(&mut self, now: Instant) -> Duration {
         match self.last_step {
             Some(last) => {
-                let dt = now - last;
+                let dt = now.saturating_sub(last);
                 self.last_step = Some(now);
                 dt
             }

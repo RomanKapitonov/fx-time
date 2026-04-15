@@ -60,6 +60,18 @@ impl Instant {
     pub const fn as_micros(self) -> u64 {
         self.0
     }
+
+    /// Returns elapsed time from `earlier` to `self`, or `Duration::ZERO` if `self < earlier`.
+    ///
+    /// Use this instead of `self - earlier` whenever the caller cannot guarantee ordering —
+    /// for example, when storing timestamps across frames.
+    pub fn saturating_sub(self, earlier: Instant) -> Duration {
+        if self.0 >= earlier.0 {
+            Duration(self.0 - earlier.0)
+        } else {
+            Duration::ZERO
+        }
+    }
 }
 
 #[cfg(feature = "defmt")]
@@ -148,6 +160,26 @@ mod tests {
         assert_eq!(base + dt, Instant::from_micros(1_250));
         assert_eq!((base + dt) - dt, base);
         assert_eq!((base + dt) - base, dt);
+    }
+
+    #[test]
+    fn saturating_sub_returns_correct_duration_when_lhs_gt_rhs() {
+        let a = Instant::from_micros(2_000);
+        let b = Instant::from_micros(750);
+        assert_eq!(a.saturating_sub(b), Duration::from_micros(1_250));
+    }
+
+    #[test]
+    fn saturating_sub_returns_zero_when_lhs_lt_rhs() {
+        let earlier = Instant::from_micros(5_000);
+        let later = Instant::from_micros(1_000);
+        assert_eq!(later.saturating_sub(earlier), Duration::ZERO);
+    }
+
+    #[test]
+    fn saturating_sub_returns_zero_when_equal() {
+        let t = Instant::from_micros(42);
+        assert_eq!(t.saturating_sub(t), Duration::ZERO);
     }
 
     #[test]
