@@ -1,17 +1,18 @@
 //! Semantic monotonic time model for the workspace.
 
-type RawDuration = fugit::MicrosDurationU64;
-type RawInstant = fugit::TimerInstantU64<1_000_000>;
-
 #[cfg(feature = "defmt")]
 use defmt::Format;
 
 /// Primary elapsed-time type for the workspace.
 ///
-/// Backed by `fugit` microsecond ticks to keep arithmetic cheap and deterministic on MCUs.
+/// Backed by a plain `u64` microsecond count. Arithmetic is saturating where
+/// noted; the raw operators (`+`, `-`) behave like `u64` (panic on overflow /
+/// underflow in debug builds, wrap in release) — callers that cannot guarantee
+/// ordering should use [`Duration::saturating_add`] or
+/// [`Instant::saturating_sub`].
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Duration(pub(crate) RawDuration);
+pub struct Duration(pub(crate) u64);
 
 impl Default for Duration {
     fn default() -> Self {
@@ -20,30 +21,28 @@ impl Default for Duration {
 }
 
 impl Duration {
-    pub const ZERO: Self = Self(RawDuration::from_ticks(0));
+    pub const ZERO: Self = Self(0);
 
     pub const fn from_micros(us: u64) -> Self {
-        Self(RawDuration::from_ticks(us))
+        Self(us)
     }
 
     pub const fn as_micros(self) -> u64 {
-        self.0.ticks()
+        self.0
     }
 
     pub const fn saturating_add(self, rhs: Self) -> Self {
-        match self.0.checked_add(rhs.0) {
-            Some(value) => Self(value),
-            None => Self(RawDuration::from_ticks(u64::MAX)),
-        }
+        Self(self.0.saturating_add(rhs.0))
     }
 }
 
 /// Monotonic timestamp in microseconds since boot.
 ///
-/// Backed by `fugit` microsecond ticks while keeping a semantic workspace-facing API.
-/// Raw wrap period remains ~584k years.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Instant(pub(crate) RawInstant);
+/// Raw wrap period: ~584,000 years. Use [`Instant::saturating_sub`] when
+/// ordering cannot be guaranteed.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Instant(pub(crate) u64);
 
 impl Default for Instant {
     fn default() -> Self {
@@ -52,14 +51,14 @@ impl Default for Instant {
 }
 
 impl Instant {
-    pub const ZERO: Self = Self(RawInstant::from_ticks(0));
+    pub const ZERO: Self = Self(0);
 
     pub const fn from_micros(us: u64) -> Self {
-        Self(RawInstant::from_ticks(us))
+        Self(us)
     }
 
     pub const fn as_micros(self) -> u64 {
-        self.0.ticks()
+        self.0
     }
 }
 
@@ -73,6 +72,8 @@ impl Format for Instant {
 impl core::ops::Sub<Instant> for Instant {
     type Output = Duration;
 
+    /// Panics in debug builds if `rhs > self`. Use [`Instant::saturating_sub`]
+    /// when ordering is not guaranteed.
     fn sub(self, rhs: Instant) -> Duration {
         Duration(self.0 - rhs.0)
     }
@@ -132,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn instant_operators_delegate_to_fugit() {
+    fn instant_operators_delegate_correctly() {
         let earlier = Instant::from_micros(1_000);
         let later = Instant::from_micros(2_750);
 
@@ -147,5 +148,15 @@ mod tests {
         assert_eq!(base + dt, Instant::from_micros(1_250));
         assert_eq!((base + dt) - dt, base);
         assert_eq!((base + dt) - base, dt);
+    }
+
+    #[test]
+    fn instant_ord_compares_by_time() {
+        let a = Instant::from_micros(100);
+        let b = Instant::from_micros(200);
+        assert!(a < b);
+        assert!(b > a);
+        assert!(a <= a);
+        assert_eq!(a, Instant::from_micros(100));
     }
 }
